@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { CATEGORIES, INITIAL_QUESTIONS } from './constants';
 import { CategoryID, Question, Category } from './types';
 import { geminiService } from './geminiService';
@@ -16,8 +16,23 @@ import {
   Check,
   Bell,
   BellOff,
-  UserPlus
+  UserPlus,
+  Mail
 } from 'lucide-react';
+
+// Utility to get a safe share URL
+const getSafeShareUrl = () => {
+  try {
+    const origin = window.location.origin;
+    // navigator.share requires an absolute URL with a valid scheme (http/https)
+    if (origin && origin.startsWith('http')) {
+      return origin;
+    }
+    return ''; // Return empty to omit the URL field if invalid
+  } catch (e) {
+    return '';
+  }
+};
 
 // Sub-components
 const Splash: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
@@ -54,6 +69,7 @@ const SettingsView: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [notifications, setNotifications] = useState(() => {
     return localStorage.getItem('conecta_notifications') === 'true';
   });
+  const isSharingRef = useRef(false);
 
   const toggleNotifications = async () => {
     const newState = !notifications;
@@ -69,20 +85,35 @@ const SettingsView: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   };
 
   const shareApp = async () => {
+    if (isSharingRef.current) return;
+    
     if (navigator.share) {
+      isSharingRef.current = true;
       try {
-        await navigator.share({
+        const shareUrl = getSafeShareUrl();
+        const shareData: ShareData = {
           title: 'App Conecta',
           text: 'Descubra o Conecta, o melhor guia para destravar conversas e criar conexões reais!',
-          url: window.location.origin,
-        });
+        };
+        if (shareUrl) shareData.url = shareUrl;
+
+        await navigator.share(shareData);
       } catch (error) {
-        console.error('Erro ao compartilhar:', error);
+        if ((error as Error).name !== 'AbortError') {
+          console.error('Erro ao compartilhar:', error);
+        }
+      } finally {
+        isSharingRef.current = false;
       }
     } else {
-      navigator.clipboard.writeText(window.location.origin);
+      const shareUrl = getSafeShareUrl() || window.location.href;
+      navigator.clipboard.writeText(shareUrl);
       alert('Link do app copiado para a área de transferência!');
     }
+  };
+
+  const contactSupport = () => {
+    window.location.href = "mailto:suporteconectaofc@gmail.com?subject=Suporte Conecta App";
   };
 
   const content = {
@@ -153,6 +184,22 @@ const SettingsView: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <div className="w-5 h-5 bg-blue-500 rounded-full translate-x-5"></div>
           </div>
         </div>
+
+        <button 
+          onClick={contactSupport}
+          className="w-full glass p-5 rounded-3xl flex items-center justify-between border-white/10 hover:bg-white/10 transition-colors group"
+        >
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-2xl bg-blue-500/20 text-blue-400 group-hover:scale-110 transition-transform">
+              <Mail size={20} />
+            </div>
+            <div className="text-left">
+              <p className="font-bold">Suporte & Contato</p>
+              <p className="text-xs text-slate-400">suporteconectaofc@gmail.com</p>
+            </div>
+          </div>
+          <ChevronLeft size={20} className="rotate-180 text-slate-500" />
+        </button>
       </div>
     ),
     about: (
@@ -177,7 +224,7 @@ const SettingsView: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </p>
           <div className="glass p-5 rounded-3xl border-white/5 mt-4">
             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Versão do Sistema</p>
-            <p className="text-xs font-medium">1.6.0 Platinum Edition (2025)</p>
+            <p className="text-xs font-medium">1.7.0 Platinum Edition (2025)</p>
             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-3 mb-1">Powered By</p>
             <p className="text-xs font-medium">Google Gemini 3 Flash AI Model</p>
           </div>
@@ -274,14 +321,33 @@ interface QuestionCardProps {
 
 const QuestionCard: React.FC<QuestionCardProps> = ({ question, isFavorite, onToggleFavorite, gradient }) => {
   const [copied, setCopied] = useState(false);
+  const isSharingRef = useRef(false);
 
-  const shareQuestion = () => {
+  const shareQuestion = async () => {
+    if (isSharingRef.current) return;
+    
     if (navigator.share) {
-      navigator.share({
-        title: 'Pergunta Conecta',
-        text: `"${question.text}" - Vi no app Conecta!`,
-        url: window.location.href,
-      }).catch(console.error);
+      isSharingRef.current = true;
+      try {
+        const shareUrl = getSafeShareUrl();
+        const shareData: ShareData = {
+          title: 'Pergunta Conecta',
+          text: `"${question.text}"\n\nVi no app Conecta!`,
+        };
+        // Only include the URL if it's a valid absolute URL to avoid 'Invalid URL' error
+        if (shareUrl) shareData.url = shareUrl;
+
+        await navigator.share(shareData);
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') {
+          console.error('Erro ao compartilhar pergunta:', error);
+        }
+      } finally {
+        isSharingRef.current = false;
+      }
+    } else {
+      copyToClipboard();
+      alert('Pergunta copiada! Você pode colar onde desejar.');
     }
   };
 
@@ -412,7 +478,7 @@ export default function App() {
   };
 
   const generateMore = async () => {
-    if (!selectedCategory || selectedCategory.id === 'favorites') return;
+    if (!selectedCategory || selectedCategory.id === 'favorites' || isGenerating) return;
     setIsGenerating(true);
     const existingTexts = filteredQuestions.map(q => q.text);
     const newQs = await geminiService.generateMoreQuestions(selectedCategory.id, existingTexts);
@@ -538,20 +604,37 @@ export default function App() {
                   ))}
                   
                   {selectedCategory.id !== 'favorites' && (
-                    <button 
-                      onClick={generateMore}
-                      disabled={isGenerating}
-                      className="w-full mt-10 h-20 glass rounded-[2rem] flex items-center justify-center gap-4 font-black text-xs uppercase tracking-[0.2em] transition-all hover:bg-white/10 active:scale-95 disabled:opacity-50 border-white/5 shadow-xl group"
-                    >
-                      {isGenerating ? (
-                        <RefreshCw size={24} className="animate-spin text-blue-400" />
-                      ) : (
-                        <>
-                          <Sparkles size={24} className="text-blue-400 group-hover:rotate-12 transition-transform" />
-                          <span>Gerar novas frases com IA</span>
-                        </>
-                      )}
-                    </button>
+                    <div className="relative mt-12 p-[1px] rounded-[2rem] overflow-hidden group will-change-transform">
+                      {/* Animated border gradient */}
+                      <div className={`absolute inset-[-1000%] bg-[conic-gradient(from_90deg_at_50%_50%,#3b82f6_0%,#1e3a8a_50%,#3b82f6_100%)] animate-[spin_4s_linear_infinite] opacity-30 group-hover:opacity-100 transition-opacity duration-500`}></div>
+                      
+                      <button 
+                        onClick={generateMore}
+                        disabled={isGenerating}
+                        className={`relative w-full h-20 bg-slate-950/80 backdrop-blur-xl rounded-[2rem] flex items-center justify-center gap-4 font-black text-xs uppercase tracking-[0.2em] transition-all duration-300 hover:bg-slate-900/40 active:scale-[0.98] disabled:opacity-50 group shadow-2xl overflow-hidden`}
+                        style={{
+                           boxShadow: `0 0 25px -5px rgba(59, 130, 246, ${isGenerating ? '0.4' : '0.1'})`
+                        }}
+                      >
+                        {/* Internal hover glow */}
+                        <div className={`absolute inset-0 bg-gradient-to-r from-blue-600/0 via-blue-500/5 to-blue-600/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000`}></div>
+
+                        {isGenerating ? (
+                          <div className="flex items-center gap-3">
+                            <RefreshCw size={24} className="animate-spin text-blue-400" />
+                            <span className="animate-pulse">Sincronizando IA...</span>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="relative">
+                              <Sparkles size={24} className="text-blue-400 group-hover:scale-125 group-hover:rotate-12 transition-all duration-500" />
+                              <div className="absolute inset-0 bg-blue-400 blur-lg opacity-0 group-hover:opacity-40 transition-opacity"></div>
+                            </div>
+                            <span className="relative z-10 text-slate-100 group-hover:text-white transition-colors">Gerar novas perguntas com IA</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   )}
                 </>
               ) : (
@@ -638,6 +721,10 @@ export default function App() {
         .custom-scrollbar::-webkit-scrollbar-thumb {
           background: rgba(255, 255, 255, 0.1);
           border-radius: 10px;
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>
